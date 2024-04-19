@@ -3,6 +3,11 @@ import asyncio
 from tcp import Servidor
 import re
 
+def debuger(msg):
+    file = open('debug.txt', 'a')
+    file.write(msg + '\n')
+    file.close()
+
 
 def validar_nome(nome):
     return re.match(br'^[a-zA-Z][a-zA-Z0-9_-]*$', nome) is not None
@@ -14,9 +19,29 @@ def sair(conexao):
 
 
 def dados_recebidos(conexao, dados):
+    debuger('dados_recebidos: ' + str(dados))
+
+    massage = dados.split(b'\r\n')
+
     if dados == b'':
         return sair(conexao)
-    print(conexao, dados)
+
+
+    for i in range(0, len(massage)-1):
+        # Verificação de PING
+        if b'ping' in massage[i].lower():
+            content = b":server PONG server :%s\r\n" % massage[i].split(b' ', 1)[1]
+            conexao.enviar(content)
+            debuger('dados_enviados: ' + str(content))
+
+    # elif massage.startswith(b'PING '):
+    #     dados = (dados.split(b' ', 1)[1])
+    #     dados = dados[2:-1]
+    #     debuger('dados_split: ' + str(dados))
+
+    #     conexao.enviar(b":server PONG server :%s\r\n" %  dados)
+    #     debuger('dados_enviados: ' + ":server PONG server :%s\r\n" %  dados)
+    #     return sair(conexao)
 
 
 def conexao_aceita(conexao):
