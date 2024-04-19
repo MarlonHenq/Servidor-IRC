@@ -3,6 +3,9 @@ import asyncio
 from tcp import Servidor
 import re
 
+messages = [b'']
+users = {}
+
 def debuger(msg):
     file = open('debug.txt', 'a')
     file.write(msg + '\n')
@@ -21,31 +24,58 @@ def sair(conexao):
 def dados_recebidos(conexao, dados):
     debuger('dados_recebidos: ' + str(dados))
 
-    massage = dados.split(b'\r\n')
+    global messages
+    global users
+
+    if messages[-1] != b'' and b'\r\n' not in messages[-1]:
+        # Se o último elemento não estiver vazio e não contiver '\r\n'
+        # Concatena os dados ao último pacote
+        messages[-1] += dados
+        # Divide novamente os dados com base em '\r\n' para separar em pacotes individuais
+        messages = messages[-1].split(b'\r\n')
+    else:
+        # Se o último pacote estiver completo ou vazio
+        # Divide os dados em pacotes separados por '\r\n'
+        messages = dados.split(b'\r\n')
 
     if dados == b'':
         return sair(conexao)
 
+    for i in range(0, len(messages)-1):
+        debuger('mensagem: ' + str(messages[i]))
 
-    for i in range(0, len(massage)-1):
-        # Verificação de PING
-        if b'ping' in massage[i].lower():
-            content = b":server PONG server :%s\r\n" % massage[i].split(b' ', 1)[1]
+        if b'ping' in messages[i].lower():
+            content = b":server PONG server :%s\r\n" % messages[i].split(b' ', 1)[1]
             conexao.enviar(content)
             debuger('dados_enviados: ' + str(content))
 
-    # elif massage.startswith(b'PING '):
-    #     dados = (dados.split(b' ', 1)[1])
-    #     dados = dados[2:-1]
-    #     debuger('dados_split: ' + str(dados))
+        elif b'nick' in messages[i].lower():
+            nick = messages[i].split(b' ', 1)[1]
+            
+            if validar_nome(nick):
+                if nick not in users:
+                    users[nick] = conexao
+                    content = b":server 001 %s :Welcome\r\n" % (nick)
+                    content1 = b":server 422 %s :MOTD File is missing\r\n" % (nick)
+                    conexao.enviar(content)
+                    conexao.enviar(content1)
+                    debuger('dados_enviados: ' + str(content))
+                    debuger('dados_enviados: ' + str(content1))
+                else:
+                    content = b":server 433 %s %s :Nickname is already in use\r\n" % (nick, nick)
+                    conexao.enviar(content)
+                    debuger('dados_enviados: ' + str(content))
 
-    #     conexao.enviar(b":server PONG server :%s\r\n" %  dados)
-    #     debuger('dados_enviados: ' + ":server PONG server :%s\r\n" %  dados)
-    #     return sair(conexao)
+            else:
+                content = b":server 432 * %s :Erroneous nickname\r\n" % (nick)
+                conexao.enviar(content)
+                debuger('dados_enviados: ' + str(content))
+
 
 
 def conexao_aceita(conexao):
     print(conexao, 'nova conexão')
+    debuger('conexao_aceita: ' + str(conexao))
     conexao.registrar_recebedor(dados_recebidos)
 
 
