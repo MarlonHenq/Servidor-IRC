@@ -57,6 +57,7 @@ def dados_recebidos(conexao, dados):
                 conexao.enviar(content)
                 debuger('dados_enviados: ' + str(content))
 
+            #NiCK
             elif b'nick' in messages[i].lower():
                # Extrair o novo apelido da mensagem
                 nick = messages[i].split(b' ', 1)[1].strip()
@@ -101,6 +102,12 @@ def dados_recebidos(conexao, dados):
                     content = b":server 432 * %s :Erroneous nickname\r\n" % nick
                     conexao.enviar(content)
                     debuger('dados_enviados: ' + str(content))
+
+
+            #Mensagem Privada
+            # elif b'privmsg' in messages[i].lower():
+                
+
     except Exception as e:
         debuger('Erro: ' + str(e))
         sair(conexao)
