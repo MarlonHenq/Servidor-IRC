@@ -3,11 +3,16 @@ import asyncio
 from tcp import Servidor
 import re
 
+#Delete debug.txt
+file = open('debug.log', 'w')
+file.write('')
+file.close()
+
 messages = [b'']
-users = {}
+users = {}  # Mapeia apelidos para conexões
 
 def debuger(msg):
-    file = open('debug.txt', 'a')
+    file = open('debug.log', 'a')
     file.write(msg + '\n')
     file.close()
 
@@ -18,59 +23,87 @@ def validar_nome(nome):
 
 def sair(conexao):
     print(conexao, 'conexão fechada')
+    # remover o usuário do dicionário ao desconectar
+    for nick, conn in users.items():
+        if conn == conexao:
+            del users[nick.lower()]
+            break
     conexao.fechar()
 
 
 def dados_recebidos(conexao, dados):
-    debuger('dados_recebidos: ' + str(dados))
+    try:
+        debuger('dados_recebidos: ' + str(dados))
+        
+        global messages
+        global users
 
-    global messages
-    global users
+        debuger('users: ' + str(users))
 
-    if messages[-1] != b'' and b'\r\n' not in messages[-1]:
-        # Se o último elemento não estiver vazio e não contiver '\r\n'
-        # Concatena os dados ao último pacote
-        messages[-1] += dados
-        # Divide novamente os dados com base em '\r\n' para separar em pacotes individuais
-        messages = messages[-1].split(b'\r\n')
-    else:
-        # Se o último pacote estiver completo ou vazio
-        # Divide os dados em pacotes separados por '\r\n'
-        messages = dados.split(b'\r\n')
+        if messages[-1] != b'' and b'\r\n' not in messages[-1]:
+            messages[-1] += dados
+            messages = messages[-1].split(b'\r\n')
+        else:
+            messages = dados.split(b'\r\n')
 
-    if dados == b'':
-        return sair(conexao)
+        if dados == b'':
+            return sair(conexao)
 
-    for i in range(0, len(messages)-1):
-        debuger('mensagem: ' + str(messages[i]))
+        for i in range(0, len(messages)-1):
+            debuger('mensagem: ' + str(messages[i]))
 
-        if b'ping' in messages[i].lower():
-            content = b":server PONG server :%s\r\n" % messages[i].split(b' ', 1)[1]
-            conexao.enviar(content)
-            debuger('dados_enviados: ' + str(content))
-
-        elif b'nick' in messages[i].lower():
-            nick = messages[i].split(b' ', 1)[1]
-            
-            if validar_nome(nick):
-                if nick not in users:
-                    users[nick] = conexao
-                    content = b":server 001 %s :Welcome\r\n" % (nick)
-                    content1 = b":server 422 %s :MOTD File is missing\r\n" % (nick)
-                    conexao.enviar(content)
-                    conexao.enviar(content1)
-                    debuger('dados_enviados: ' + str(content))
-                    debuger('dados_enviados: ' + str(content1))
-                else:
-                    content = b":server 433 %s %s :Nickname is already in use\r\n" % (nick, nick)
-                    conexao.enviar(content)
-                    debuger('dados_enviados: ' + str(content))
-
-            else:
-                content = b":server 432 * %s :Erroneous nickname\r\n" % (nick)
+            if b'ping' in messages[i].lower():
+                content = b":server PONG server :%s\r\n" % messages[i].split(b' ', 1)[1]
                 conexao.enviar(content)
                 debuger('dados_enviados: ' + str(content))
 
+            elif b'nick' in messages[i].lower():
+               # Extrair o novo apelido da mensagem
+                nick = messages[i].split(b' ', 1)[1].strip()
+
+                # Verificar se o apelido é válido
+                if validar_nome(nick):
+                    lower_nick = nick.lower()
+                    
+                    # Obter o apelido atual associado à conexão, se houver
+                    current_nick = next((n for n, conn in users.items() if conn == conexao), None)
+                    
+                    # Verificar se o apelido já está em uso
+                    if lower_nick in users:
+                        # Enviar mensagem de erro se o apelido já estiver em uso
+                        content = b":server 433 %s %s :Nickname is already in use\r\n" % (current_nick if current_nick else b'*', nick)
+                        conexao.enviar(content)
+                        debuger('dados_enviados: ' + str(content))
+                    else:
+                        if current_nick:
+                            # Remover o apelido antigo, se existir
+                            del users[current_nick]
+                        
+                        # Atualizar o apelido da conexão
+                        users[lower_nick] = conexao
+                        
+                        # Enviar mensagens apropriadas
+                        if current_nick:
+                            # Enviar mensagem de mudança de apelido
+                            content = b":%s NICK %s\r\n" % (current_nick, nick)
+                            conexao.enviar(content)
+                            debuger('dados_enviados: ' + str(content))
+                        else:
+                            # Enviar mensagem de boas-vindas se for a primeira conexão
+                            content = b":server 001 %s :Welcome\r\n" % nick
+                            content1 = b":server 422 %s :MOTD File is missing\r\n" % nick
+                            conexao.enviar(content)
+                            conexao.enviar(content1)
+                            debuger('dados_enviados: ' + str(content))
+                            debuger('dados_enviados: ' + str(content1))
+                else:
+                    # Enviar mensagem de erro se o apelido for inválido
+                    content = b":server 432 * %s :Erroneous nickname\r\n" % nick
+                    conexao.enviar(content)
+                    debuger('dados_enviados: ' + str(content))
+    except Exception as e:
+        debuger('Erro: ' + str(e))
+        sair(conexao)
 
 
 def conexao_aceita(conexao):
