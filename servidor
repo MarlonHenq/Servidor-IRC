@@ -3,33 +3,31 @@ import asyncio
 from tcp import Servidor
 import re
 
-#Delete debug.txt
+# Delete debug.txt
 file = open('debug.log', 'w')
 file.write('')
 file.close()
 
 messages = [b'']
 users = {}  # Mapeia apelidos para conexões
+channels = {}  # Mapeia canais para listas de apelidos
 
 def debuger(msg):
     file = open('debug.log', 'a')
     file.write(msg + '\n')
     file.close()
 
-
 def validar_nome(nome):
     return re.match(br'^[a-zA-Z][a-zA-Z0-9_-]*$', nome) is not None
 
-
 def sair(conexao):
     print(conexao, 'conexão fechada')
-    # remover o usuário do dicionário ao desconectar
+    # Remover o usuário do dicionário ao desconectar
     for nick, conn in users.items():
         if conn == conexao:
             del users[nick.lower()]
             break
     conexao.fechar()
-
 
 def dados_recebidos(conexao, dados):
     try:
@@ -57,9 +55,9 @@ def dados_recebidos(conexao, dados):
                 conexao.enviar(content)
                 debuger('dados_enviados: ' + str(content))
 
-            #NiCK
+            # NiCK
             elif b'nick' in messages[i].lower():
-               # Extrair o novo apelido da mensagem
+                # Extrair o novo apelido da mensagem
                 nick = messages[i].split(b' ', 1)[1].strip()
 
                 # Verificar se o apelido é válido
@@ -78,7 +76,7 @@ def dados_recebidos(conexao, dados):
                     else:
                         if current_nick:
                             # Remover o apelido antigo, se existir
-                            del users[current_nick]
+                            del users[current_nick.lower()]
                         
                         # Atualizar o apelido da conexão
                         users[lower_nick] = conexao
@@ -103,21 +101,62 @@ def dados_recebidos(conexao, dados):
                     conexao.enviar(content)
                     debuger('dados_enviados: ' + str(content))
 
+            # Mensagem Privada
+            elif b'privmsg' in messages[i].lower():
+                # Extrair o apelido de origem, destino e conteúdo da mensagem
+                user_send = next((n for n, conn in users.items() if conn == conexao), None)
+                if user_send is None:
+                    # Se o usuário não tiver um apelido definido, não pode enviar mensagens
+                    content = b":server 401 * :No nickname defined\r\n"
+                    conexao.enviar(content)
+                    debuger('dados_enviados: ' + str(content))
+                    continue
+                
+                # Extrair destino e mensagem
+                partes = messages[i].split(b' ', 2)
+                if len(partes) < 3:
+                    # Se o formato da mensagem estiver incorreto
+                    content = b":server 412 %s :No text to send\r\n" % user_send
+                    conexao.enviar(content)
+                    debuger('dados_enviados: ' + str(content))
+                    continue
+                
+                user_receive = partes[1].strip()
+                message = partes[2].strip()
 
-            #Mensagem Privada
-            # elif b'privmsg' in messages[i].lower():
+                debuger('user_send: ' + str(user_send))
+                debuger('user_receive: ' + str(user_receive))
+                debuger('message: ' + str(message))
+
+                if user_receive.startswith(b'#'):
+                    # Lógica para canais
+                    destino = user_receive.lower()
+                    if destino in channels:
+                        if user_send.lower() in [user.lower() for user in channels[destino]]:
+                            resposta = b':%s PRIVMSG %s :%s\r\n' % (user_send, user_receive, message)
+                            for user in channels[destino]:
+                                if user.lower() != user_send.lower():
+                                    users[user.lower()].enviar(resposta)
+                                    debuger('dados_enviados: ' + str(resposta))
+                else:
+                    # Mensagem direta para outro usuário
+                    destino = user_receive.lower()
+                    if destino in users:
+                        resposta = b':%s PRIVMSG %s %s\r\n' % (user_send, user_receive, message)
+                        users[destino].enviar(resposta)
+                        debuger('dados_enviados: ' + str(resposta))
+
+            
                 
 
     except Exception as e:
         debuger('Erro: ' + str(e))
         sair(conexao)
 
-
 def conexao_aceita(conexao):
     print(conexao, 'nova conexão')
     debuger('conexao_aceita: ' + str(conexao))
     conexao.registrar_recebedor(dados_recebidos)
-
 
 servidor = Servidor(6667)
 servidor.registrar_monitor_de_conexoes_aceitas(conexao_aceita)
