@@ -209,27 +209,43 @@ def dados_recebidos(conexao, dados):
 
             # PART
             elif b'part' in messages[i].lower():
-                channel = messages[i].split(b' ')[-1].strip()
-                lower_channel = channel.lower()
-                user_nick = next((n for n, conn in users.items() if conn == conexao), None)
-                if user_nick:
-                    if lower_channel in channels and conexao in channels[lower_channel]:
-                        channels[lower_channel].remove(conexao)
-                        if not channels[lower_channel]:
-                            del channels[lower_channel]
-                        if conexao in userChannels and lower_channel in userChannels[conexao]:
-                            userChannels[conexao].remove(lower_channel)
+                partes = messages[i].split(b' ')
+                channel = partes[1].strip().lower() if len(partes) > 1 else None
+
+                # Verifica se o canal foi fornecido e começa com '#'
+                if channel and channel.startswith(b'#'):
+                    user_nick = next((n for n, conn in users.items() if conn == conexao), None)
+                    
+                    # Remove o usuário do canal
+                    if user_nick and channel in channels and conexao in channels[channel]:
+                        
+                        channels[channel].remove(conexao)
+                        if not channels[channel]:
+                            del channels[channel]
+
+                        if conexao in userChannels:
+                            userChannels[conexao].remove(channel)
+                            if not userChannels[conexao]:
+                                del userChannels[conexao]
                         resposta = b':%s PART %s\r\n' % (user_nick, channel)
-                        for user in channels[lower_channel]:
+                        for user in channels.get(channel, []):
                             user.enviar(resposta)
-                            debuger('dados_enviados: ' + str(resposta))
-                            break
+                        conexao.enviar(resposta)
+                        debuger('dados_enviados: ' + str(resposta))
+
                     else:
-                        conexao.enviar(b':server 442 %s %s :You\'re not on that channel\r\n' % (user_nick, channel))
-                        debuger('dados_enviados: You\'re not on that channel - ' + str(channel))
+                        # Nem precisa de resposta se o usuário não estiver no canal
+                        resposta = b':server 442 %s %s :You are not on that channel\r\n' % (user_nick, channel)
+                        conexao.enviar(resposta)
+                        debuger('dados_enviados: ' + str(resposta))
                 else:
-                    conexao.enviar(b':server 401 * :No nickname defined\r\n')
-                    debuger('dados_enviados: No nickname defined')
+                    # erro n utilizado tb
+                    user_nick = next((n for n, conn in users.items() if conn == conexao), None)
+                    resposta = b':server 403 %s :No such channel\r\n' % (user_nick if user_nick else b'*')
+                    conexao.enviar(resposta)
+                    debuger('dados_enviados: ' + str(resposta))
+
+
 
     except Exception as e:
         debuger('Erro: ' + str(e))
