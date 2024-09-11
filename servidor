@@ -23,18 +23,40 @@ def validar_nome(nome):
 
 def sair(conexao):
     print(conexao, 'conexão fechada')
-    # Remover o usuário do dicionário ao desconectar
-    for nick, conn in users.items():
-        if conn == conexao:
-            del users[nick.lower()]
-            break
+
+    # Obter o apelido do usuário
+    user_nick = next((n for n, conn in users.items() if conn == conexao), None)
+
+    if user_nick:
+        # Enviar mensagem QUIT para todos os usuários em canais comuns
+        if conexao in userChannels:
+            for channel in userChannels[conexao]:
+                if channel in channels:
+                    quit_message = b':%s QUIT\r\n' % user_nick
+                    debuger('dados_enviados: ' + str(quit_message))
+                    for user in channels[channel]:
+                        if user != conexao:
+                            user.enviar(quit_message)
+                            
+
+        # Remover o usuário do dicionário users
+        del users[user_nick.lower()]
+
     # Remover o usuário de todos os canais
-    for channel in userChannels.get(conexao, []):
-        if channel in channels:
-            channels[channel].remove(conexao)
-            if not channels[channel]:
-                del channels[channel]
+    if conexao in userChannels:
+        for channel in userChannels[conexao]:
+            if channel in channels:
+                channels[channel].remove(conexao)
+                # Se o canal estiver vazio, removê-lo
+                if not channels[channel]:
+                    del channels[channel]
+        # Remover o mapeamento do usuário para canais
+        del userChannels[conexao]
+
+    # Fechar a conexão
     conexao.fechar()
+
+
 
 def dados_recebidos(conexao, dados):
     try:
