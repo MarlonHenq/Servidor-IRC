@@ -3,14 +3,15 @@ import asyncio
 from tcp import Servidor
 import re
 
-# Delete debug.txt
+# Delete debug.log
 file = open('debug.log', 'w')
 file.write('')
 file.close()
 
 messages = [b'']
 users = {}  # Mapeia apelidos para conexões
-channels = {}  # Mapeia canais para listas de apelidos
+channels = {}  # Mapeia canais para listas de conexões
+userChannels = {}  # Mapeia usuários para canais
 
 def debuger(msg):
     file = open('debug.log', 'a')
@@ -27,6 +28,12 @@ def sair(conexao):
         if conn == conexao:
             del users[nick.lower()]
             break
+    # Remover o usuário de todos os canais
+    for channel in userChannels.get(conexao, []):
+        if channel in channels:
+            channels[channel].remove(conexao)
+            if not channels[channel]:
+                del channels[channel]
     conexao.fechar()
 
 def dados_recebidos(conexao, dados):
@@ -35,8 +42,12 @@ def dados_recebidos(conexao, dados):
         
         global messages
         global users
+        global channels
+        global userChannels
 
         debuger('users: ' + str(users))
+        debuger('channels: ' + str(channels))
+        debuger('userChannels: ' + str(userChannels))
 
         if messages[-1] != b'' and b'\r\n' not in messages[-1]:
             messages[-1] += dados
@@ -101,7 +112,7 @@ def dados_recebidos(conexao, dados):
                     conexao.enviar(content)
                     debuger('dados_enviados: ' + str(content))
 
-            # Mensagem Privada
+            # PRIVMSG
             elif b'privmsg' in messages[i].lower():
                 # Extrair o apelido de origem, destino e conteúdo da mensagem
                 user_send = next((n for n, conn in users.items() if conn == conexao), None)
@@ -121,33 +132,104 @@ def dados_recebidos(conexao, dados):
                     debuger('dados_enviados: ' + str(content))
                     continue
                 
-                user_receive = partes[1].strip()
+                user_receive = partes[1].strip().lower()
                 message = partes[2].strip()
-
+                
+                # user_send = users[str(conexao)]
                 debuger('user_send: ' + str(user_send))
                 debuger('user_receive: ' + str(user_receive))
-                debuger('message: ' + str(message))
+                debuger('message_priv: ' + str(message))
 
                 if user_receive.startswith(b'#'):
                     # Lógica para canais
-                    destino = user_receive.lower()
-                    if destino in channels:
-                        if user_send.lower() in [user.lower() for user in channels[destino]]:
-                            resposta = b':%s PRIVMSG %s :%s\r\n' % (user_send, user_receive, message)
-                            for user in channels[destino]:
-                                if user.lower() != user_send.lower():
-                                    users[user.lower()].enviar(resposta)
-                                    debuger('dados_enviados: ' + str(resposta))
+                    if user_receive in channels:
+                        debuger('aaa')
+                        #Verificar 
+                        resposta = b':%s PRIVMSG %s %s\r\n' % (user_send, user_receive, message)
+                        debuger('bbbbb')
+                        for user in channels[user_receive]:
+                            if user != conexao:
+                                user.enviar(resposta)
+                                debuger('dados_enviados: ' + str(resposta))
                 else:
                     # Mensagem direta para outro usuário
-                    destino = user_receive.lower()
-                    if destino in users:
+                    if user_receive in users:
                         resposta = b':%s PRIVMSG %s %s\r\n' % (user_send, user_receive, message)
-                        users[destino].enviar(resposta)
+                        users[user_receive].enviar(resposta)
                         debuger('dados_enviados: ' + str(resposta))
 
-            
-                
+            # JOIN
+            elif b'join' in messages[i].lower():
+                channel = messages[i].split(b' ')[-1].strip()
+
+                if channel.startswith(b'#') and validar_nome(channel[1:]):
+                    lower_channel = channel.lower()
+                    if lower_channel not in channels:
+                        channels[lower_channel] = []
+                    
+                    user_nick = next((n for n, conn in users.items() if conn == conexao), None)
+                    if user_nick:
+                        if conexao not in channels[lower_channel]:
+                            channels[lower_channel].append(conexao)
+
+                        if conexao not in userChannels:
+                            userChannels[conexao] = []
+                        userChannels[conexao].append(lower_channel)
+
+                        resposta = b':%s JOIN :%s\r\n' % (user_nick, channel)
+                        for user in channels[lower_channel]:
+                            user.enviar(resposta)
+                            debuger('dados_enviados: ' + str(resposta))
+
+                        participants = [n for n, conn in users.items() if conn in channels[lower_channel]]
+                        participants.sort()
+                        base = b':server 353 %s = %s :' % (user_nick, channel)
+                        resposta = base
+
+                        for participant in participants:
+                            if len(resposta) + len(participant) < 510:
+                                resposta += participant + b' '
+                            else:
+                                conexao.enviar(resposta + b'\r\n')
+                                resposta = base + participant + b' '
+                        
+                        if resposta != base:
+                            conexao.enviar(resposta + b'\r\n')
+                        
+                        conexao.enviar(b':server 366 %s %s :End of /NAMES list.\r\n' % (user_nick, channel))
+                        debuger('dados_enviados: End of /NAMES list for ' + str(channel))
+
+                    else:
+                        conexao.enviar(b':server 401 * :No nickname defined\r\n')
+                        debuger('dados_enviados: No nickname defined')
+
+                else:
+                    conexao.enviar(b':server 403 %s :No such channel\r\n' % channel)
+                    debuger('dados_enviados: No such channel - ' + str(channel))
+
+            # PART
+            elif b'part' in messages[i].lower():
+                channel = messages[i].split(b' ')[-1].strip()
+                lower_channel = channel.lower()
+                user_nick = next((n for n, conn in users.items() if conn == conexao), None)
+                if user_nick:
+                    if lower_channel in channels and conexao in channels[lower_channel]:
+                        channels[lower_channel].remove(conexao)
+                        if not channels[lower_channel]:
+                            del channels[lower_channel]
+                        if conexao in userChannels and lower_channel in userChannels[conexao]:
+                            userChannels[conexao].remove(lower_channel)
+                        resposta = b':%s PART %s\r\n' % (user_nick, channel)
+                        for user in channels[lower_channel]:
+                            user.enviar(resposta)
+                            debuger('dados_enviados: ' + str(resposta))
+                            break
+                    else:
+                        conexao.enviar(b':server 442 %s %s :You\'re not on that channel\r\n' % (user_nick, channel))
+                        debuger('dados_enviados: You\'re not on that channel - ' + str(channel))
+                else:
+                    conexao.enviar(b':server 401 * :No nickname defined\r\n')
+                    debuger('dados_enviados: No nickname defined')
 
     except Exception as e:
         debuger('Erro: ' + str(e))
